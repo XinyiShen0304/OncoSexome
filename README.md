@@ -9,4 +9,4 @@ The data inclusion criteria were:
 - 1000 cases for a drug across all four groups.
 - More than five adverse events in both sexes.
 
-Please find ``SDR_AR.rmd`` for detailed R codes.
+Please find ``SDR_AR.Rmd`` for detailed R codes.
