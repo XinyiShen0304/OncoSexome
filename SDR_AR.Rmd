@@ -1,0 +1,100 @@
+---
+title: "Sex_ROR"
+output: html_document
+date: "2024-01-29"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(readr)
+library(stringr)
+ae.f = read.csv("public.faers.female.csv")
+ae.m = read.csv("public.faers.male.csv")
+```
+
+# AR frequencies
+drug_ae/drug_no_ae
+very common >=10%
+common – this means that between 1 in 10 and 1 in 100 people may be affected. 
+uncommon – this means that between 1 in 100 and 1 in 1,000 people may be affected. 
+rare – means that between 1 in 1,000 and 1 in 10,000 people may be affected. 
+very rare – means that fewer than 1 in 10,000 people may be affected.
+References:
+https://www.knowledge.scot.nhs.uk/ecomscormplayer/ADRmodule1/8-incidence.html
+
+```{r}
+ae.f$AE_prop <- 100*ae.f$drug_ae/(ae.f$drug_no_ae+ae.f$drug_ae)
+ae.m$AE_prop <- 100*ae.m$drug_ae/(ae.m$drug_no_ae+ae.m$drug_ae)
+# quantile(ae.m$AE_prop)
+ae.f<- ae.f %>% 
+  mutate(freq_label = case_when(AE_prop/100 >1/10 ~ "Very common", 
+                                (AE_prop/100<=1/10 & AE_prop/100>1/100) ~ "Common",
+                                (AE_prop/100<=1/100 & AE_prop/100>1/1000) ~ "Uncommon",
+                                (AE_prop/100<=1/1000 & AE_prop/100>1/10000) ~ "Rare",
+                                AE_prop/100 <=1/10000 ~ "Very rare"))
+ae.m<- ae.m %>% 
+  mutate(freq_label = case_when(AE_prop/100 >1/10 ~ "Very common", 
+                                (AE_prop/100<=1/10 & AE_prop/100>1/100) ~ "Common",
+                                (AE_prop/100<=1/100 & AE_prop/100>1/1000) ~ "Uncommon",
+                                (AE_prop/100<=1/1000 & AE_prop/100>1/10000) ~ "Rare",
+                                AE_prop/100 <=1/10000 ~ "Very rare"))
+table(ae.f$freq_label)
+table(ae.m$freq_label)
+```
+
+
+# Find sex-specific AEs
+```{r}
+# Identify unique and common pairs
+male_unique <- anti_join(ae.m, ae.f, by = c("struct_id", "meddra_code"))#
+female_unique <- anti_join(ae.f, ae.m, by = c("struct_id", "meddra_code"))
+common_pairs <- inner_join(ae.m, ae.f, by = c("struct_id", "meddra_code"))#
+# Annotate sex bias
+male_unique$mode <- "male-specific"
+female_unique$mode <- "female-specific" 
+sex_spec <- rbind(male_unique, female_unique)
+```
+
+# Calculate Sex-biased ARs
+```{r}
+names(common_pairs) <- gsub(".x", ".m", names(common_pairs))
+names(common_pairs) <- gsub(".y", ".f", names(common_pairs))
+common_pairs$sex_bias <- NA
+# Perform Fisher's Exact Test and calculate ROR and logROR for common pairs
+common_pairs <- common_pairs %>% 
+  rowwise() %>% 
+  mutate(
+    # Check if all conditions are met
+    conditions_met = (drug_ae.m >= 30 | drug_ae.f >= 30) & 
+                     (drug_ae.m + drug_ae.f >= 50) & 
+                     (drug_ae.m + drug_no_ae.m + drug_ae.f + drug_no_ae.f >= 1000) & 
+                     (drug_ae.m > 5 & drug_ae.f > 5),
+    # Perform Fisher's test if conditions are met, otherwise return NA
+    fisher_test = if (conditions_met) {
+                  list(fisher.test(matrix(c(drug_ae.m, drug_no_ae.m, drug_ae.f, drug_no_ae.f), ncol = 2)))
+                } else {
+                  list(NA)
+                },
+    p_value = if (conditions_met) fisher_test$p.value else NA,
+    ROR = if (conditions_met) fisher_test$estimate else NA,
+    conf_lower = if (conditions_met) fisher_test$conf.int[1] else NA,
+    conf_upper = if (conditions_met) fisher_test$conf.int[2] else NA,
+    logROR = if (conditions_met) log(ROR) else NA
+  ) %>% 
+  select(-fisher_test, -conditions_met)
+
+# Adjust p-values using Benjamini-Hochberg method
+common_pairs$BH_adjusted_p = p.adjust(common_pairs$p_value, method = "BH")
+common_pairs$neg_log2_BH_p = -log10(common_pairs$BH_adjusted_p)
+
+# Annotate sex bias for common pairs
+common_pairs1 <- common_pairs %>% 
+  mutate(sex_bias = ifelse(!is.na(logROR) & (logROR > 0)& (p_value<0.05), "female-biased", ifelse(!is.na(logROR) & (logROR < 0)& (p_value<0.05), "male-biased", NA_character_)))
+write.csv(common_pairs,"Sex-biased AR_drugs.csv",row.names = F)
+```
+
+
